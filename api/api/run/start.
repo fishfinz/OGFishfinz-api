@@ -1,0 +1,24 @@
+import jwt from 'jsonwebtoken';
+import { addCors, ok, bad, signRunToken } from '../_lib/utils.js';
+
+export async function handler(req, res) {
+  addCors(res);
+  if (req.method !== 'POST') { res.statusCode = 405; res.end('Method Not Allowed'); return; }
+
+  const auth = req.headers['authorization'] || '';
+  const token = auth.startsWith('Bearer ') ? auth.slice(7) : null;
+
+  let body=''; for await (const c of req) body += c;
+  const { playerId } = JSON.parse(body || '{}');
+
+  let resolvedId = playerId;
+  if (token) {
+    try { const decoded = jwt.verify(token, process.env.JWT_SECRET || 'dev-secret-change-me'); resolvedId = decoded.sub; } catch {}
+  }
+  if (!resolvedId) return bad(res, 400, 'Missing playerId');
+
+  const issuedAt = Date.now();
+  const runToken = signRunToken(resolvedId, issuedAt);
+  ok(res, { runToken, issuedAt });
+}
+export default handler;
