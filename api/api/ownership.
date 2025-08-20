@@ -1,0 +1,49 @@
+import jwt from 'jsonwebtoken';
+import { addCors, bad, ok, normalizeAddress, getProvider, ERC721_ABI, ERC1155_ABI } from './_lib/utils.js';
+import { ethers } from 'ethers';
+
+export async function handler(req, res) {
+  addCors(res);
+  if (req.method !== 'POST') { res.statusCode = 405; res.end('Method Not Allowed'); return; }
+
+  const auth = req.headers['authorization'] || '';
+  const token = auth.startsWith('Bearer ') ? auth.slice(7) : null;
+  if (!token) return bad(res, 401, 'Missing token');
+
+  let decoded;
+  try { decoded = jwt.verify(token, process.env.JWT_SECRET || 'dev-secret-change-me'); }
+  catch { return bad(res, 401, 'Invalid token'); }
+
+  let body=''; for await (const c of req) body += c;
+  const { items } = JSON.parse(body || '{}');
+  if (!Array.isArray(items)) return bad(res, 400, 'Missing items');
+
+  const address = normalizeAddress(decoded.sub);
+  const provider = getProvider();
+  const playableIds = [];
+
+  for (const it of items) {
+    const contract = normalizeAddress(it.contract);
+    const standard = (it.standard || '').toUpperCase();
+    const tokenId = it.tokenId != null ? BigInt(it.tokenId) : null;
+    try {
+      if (standard === 'ERC721') {
+        const c = new ethers.Contract(contract, ERC721_ABI, provider);
+        if (tokenId != null) {
+          const owner = await c.ownerOf(tokenId);
+          if (owner.toLowerCase() === address.toLowerCase()) playableIds.push(it.id);
+        } else {
+          const bal = await c.balanceOf(address);
+          if (BigInt(bal) > 0n) playableIds.push(it.id);
+        }
+      } else if (standard === 'ERC1155') {
+        const c = new ethers.Contract(contract, ERC1155_ABI, provider);
+        if (tokenId == null) continue;
+        const bal = await c.balanceOf(address, tokenId);
+        if (BigInt(bal) > 0n) playableIds.push(it.id);
+      }
+    } catch {}
+  }
+  ok(res, { playableIds });
+}
+export default handler;
